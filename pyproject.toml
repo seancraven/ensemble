@@ -7,7 +7,21 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
+jax = "^0.4.11"
+gymnasium = "^0.28.1"
+matplotlib = "^3.7.1"
+dm-haiku = { git = "https://github.com/deepmind/dm-haiku" }
+optax = "^0.1.5"
+pylint = "^2.17.4"
+wrapt = "^1.15.0"
+dill = "^0.3.6"
 
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.23.1"
+[tool.pyright]
+venv = ".venv"
+useLibraryCodeForTypes = true
 
 [build-system]
 requires = ["poetry-core"]
