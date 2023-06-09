@@ -1,14 +1,19 @@
-from typing import Tuple
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Tuple, Union
 
 import gymnasium as gym
 import haiku as hk
 import jax
 import jax.numpy as jnp
 import numpy as np
+import optax
 from jax import Array
 from jax.nn import log_softmax
 from jax.random import KeyArray
 from jax.typing import ArrayLike
+from optax import GradientTransformation, OptState, adam
 
 
 class RLEnvironmentError(Exception):
@@ -26,6 +31,8 @@ class Agent(hk.Module):
         observation_space: gym.Space,
         action_space: gym.spaces.Discrete,
         internal_dim: int,
+        actor_lr: float = 1e-3,
+        critic_lr: float = 1e-3,
     ):
         super().__init__()
         match observation_space.shape:
@@ -55,17 +62,19 @@ class Agent(hk.Module):
             ]
         )
         self.transformed_actor = self.get_actor_params()
-        self.actor_params = self.transformed_actor.init(jnp.zeros((1, self.input_dim)))
         self.transformed_critic = self.get_critic_params()
-        self.critic_params = self.transformed_critic.init(
-            jnp.zeros((1, self.input_dim))
+        self.state = AgentState.new(
+            self.transformed_actor.init((1, self.input_dim)),
+            self.transformed_critic.init((1, self.input_dim)),
+            actor_lr,
+            critic_lr,
         )
 
-    def actor_forward(self, state: ArrayLike) -> Array:
-        return self.transformed_actor.apply(self.actor_params, state)
+    def actor_forward(self, params: hk.Params, state: ArrayLike) -> Array:
+        return self.transformed_actor.apply(params, state)
 
-    def critic_forward(self, state: ArrayLike) -> Array:
-        return self.transformed_critic.apply(self.critic_params, state)
+    def critic_forward(self, params: hk.Params, state: ArrayLike) -> Array:
+        return self.transformed_critic.apply(params, state)
 
     def get_actor_params(self) -> hk.Transformed:
         return hk.without_apply_rng(hk.transform(self.actor))
@@ -73,23 +82,60 @@ class Agent(hk.Module):
     def get_critic_params(self) -> hk.Transformed:
         return hk.without_apply_rng(hk.transform(self.critic))
 
-    def get_action(
-        self, key: KeyArray, state: ArrayLike
-    ) -> Tuple[Array, Array, Array, Array, KeyArray]:
-        """Selects an action from the agent's policy.
+    @staticmethod
+    def get_action_entropy(action_log_probs: ArrayLike) -> Array:
+        return -jnp.sum(action_log_probs * jnp.exp(action_log_probs), axis=-1)
 
-        Args:
-            key (KeyArray): A PRNG key.
-            state (ArrayLike): The current state of the environment.
+    @staticmethod
+    def get_action(key: KeyArray, action_log_probs: ArrayLike) -> Array:
+        return jax.random.categorical(key, action_log_probs)
 
-        Returns:
-            Tuple[Array, Array, Array, Array, KeyArray]: A tuple containing the action, log probability of the action, the state value, the entropy of the policy and the new PRNG key.
-        """
+    def get_action_log_probs(self, params: hk.Params, state: ArrayLike) -> Array:
+        logits = self.actor_forward(params, state)
+        return log_softmax(logits)
 
-        logits = self.actor_forward(state)
-        key, subkey = jax.random.split(key)
-        actions = jax.random.categorical(subkey, logits)
-        log_prob = log_softmax(logits)
-        entropy = -jnp.sum(log_prob * jnp.exp(log_prob), axis=-1)
-        state_values = self.critic_forward(state)
-        return actions, log_probs, state_values, entropy, subkey
+
+@dataclass
+class AgentState:
+    """Container for mutable agent state."""
+
+    actor_opt: GradientTransformation
+    critic_opt: GradientTransformation
+
+    actor_params: Union[hk.Params, optax.Params]
+    critic_params: Union[hk.Params, optax.Params]
+    actor_opt_state: OptState
+    critic_opt_state: OptState
+
+    @staticmethod
+    def new(
+        actor_params: hk.Params,
+        critic_params: hk.Params,
+        actor_lr: float,
+        critic_lr: float,
+    ) -> AgentState:
+        """Constructs a new AgentState."""
+        actor_opt = adam(actor_lr)
+        critic_opt = adam(critic_lr)
+        actor_opt_init = actor_opt.init(actor_params)
+        critic_opt_init = critic_opt.init(critic_params)
+        return AgentState(
+            actor_opt,
+            critic_opt,
+            actor_params,
+            critic_params,
+            actor_opt_init,
+            critic_opt_init,
+        )
+
+    def update(self, actor_grad: Array, critic_grad: Array):
+        """Updates the agent state."""
+        actor_updates, self.actor_opt_state = self.actor_opt.update(
+            actor_grad, self.actor_opt_state, self.actor_params
+        )
+        self.actor_params = optax.apply_updates(self.actor_params, actor_updates)
+
+        critic_updates, self.critic_opt_state = self.critic_opt.update(
+            critic_grad, self.critic_opt_state, self.critic_params
+        )
+        self.critic_params = optax.apply_updates(self.critic_params, critic_updates)
