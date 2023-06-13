@@ -33,12 +33,14 @@ def train_agent(
     entropies = []
     states, _ = env_wrapper.reset(seed=training.seed)
 
-    keys = jax.random.PRNGKey(training.seed)
+    key = jax.random.PRNGKey(training.seed)
+    _, subkey = jax.random.split(key, env_wrapper.num_envs)
+
     for _ in range(training.num_episodes):
-        states, actor_loss, critic_loss, entropy, keys = training.episode(
-            keys, states, agent, training, env_wrapper
+        states, actor_loss, critic_loss, entropy, subkey = training.episode(
+            subkey, states, agent, training, env_wrapper
         )
-        keys = jax.random.split(keys, training.num_envs)
+        _, subkey = jax.random.split(key)
         actor_losses.append(actor_loss)
         critic_losses.append(critic_loss)
         entropies.append(entropy)
@@ -52,7 +54,6 @@ def train_agent(
     np.save(f"{dir_name}/{training.seed}_entropies.npy", entropies)
     np.save(f"{dir_name}/{training.seed}_actor_losses.npy", actor_losses)
     np.save(f"{dir_name}/{training.seed}_critic_losses.npy", critic_losses)
-
 
 
 @dataclass
@@ -163,7 +164,7 @@ class A2CTraining(AgentTraining):
         masks = []
         entropy = []
         actions = []
-        key, subkey = jax.random.split(key)
+        key, subkey = jax.random.split(key, env_wrapper.num_envs)
         for _ in range(training.num_timesteps):
             action_log_probs = agent.get_log_policy(agent.state.actor_params, states)
             policy_entropy = agent.get_policy_entropy(action_log_probs)
@@ -177,8 +178,7 @@ class A2CTraining(AgentTraining):
             masks.append(1 - done)
             entropy.append(policy_entropy.squeeze())
             actions.append(jax_action.squeeze())
-
-            _, subkey = jax.random.split(subkey)
+            key, subkey = jax.random.split(subkey)
 
         rewards = jnp.stack(rewards)
         state_trajectory = jnp.stack(state_trajectory)
