@@ -80,22 +80,29 @@ class Agent:
         )
 
     def actor_forward(self, params: hk.Params, state: ArrayLike) -> Array:
-        return self.transformed_actor.apply(params, state)
+        return self.transformed_actor.apply(params, state).squeeze()
 
     def critic_forward(self, params: hk.Params, state: ArrayLike) -> Array:
-        return self.transformed_critic.apply(params, state)
+        return self.transformed_critic.apply(params, state).squeeze()
 
     @staticmethod
-    def get_action_entropy(action_log_probs: ArrayLike) -> Array:
+    def get_policy_entropy(action_log_probs: ArrayLike) -> Array:
         return -jnp.sum(action_log_probs * jnp.exp(action_log_probs), axis=-1)
 
     @staticmethod
-    def get_action(key: KeyArray, action_log_probs: ArrayLike) -> Array:
-        return jax.random.categorical(key, action_log_probs)
+    def get_action(key: KeyArray, log_policy: ArrayLike) -> Array:
+        return jax.random.categorical(key, log_policy)
 
-    def get_action_log_probs(self, params: hk.Params, state: ArrayLike) -> Array:
+    def get_log_policy(self, params: hk.Params, state: ArrayLike) -> Array:
         logits = self.actor_forward(params, state)
         return log_softmax(logits)
+
+    def get_action_log_probs(
+        self, params: hk.Params, states: Array, actions: Array
+    ) -> Array:
+        log_policy = self.get_log_policy(params, states)
+        action_log_probs = log_policy.at[actions].get()
+        return action_log_probs.mean()
 
 
 @dataclass

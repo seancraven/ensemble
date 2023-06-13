@@ -8,7 +8,8 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import numpy as np
-from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
+from gymnasium.wrappers.record_episode_statistics import \
+    RecordEpisodeStatistics
 from jax import Array
 from jax.nn import log_softmax
 from jax.random import KeyArray
@@ -31,9 +32,10 @@ def train_agent(
     entropies = []
     states, _ = env_wrapper.reset(seed=training.seed)
 
+    keys = jax.random.PRNGKey(training.seed)
     for _ in range(training.num_episodes):
         states, advantage, entropy, keys = training.episode(
-            states, agent, training, env_wrapper
+            keys, states, agent, training, env_wrapper
         )
         keys = jax.random.split(keys, training.num_envs)
         advantages.append(advantage)
@@ -121,17 +123,19 @@ def calculate_gae(
     """
     values = agent.critic_forward(params, states)
     max_timestep = rewards.shape[0]
-    advantages = jnp.zeros_like(rewards)
+    advantages = [jnp.zeros_like(rewards.at[0].get())]
+
     for timestep in reversed(range(max_timestep - 1)):
         delta = (
-            rewards[timestep]
-            + gamma * values[timestep + 1] * masks[timestep]
-            - values[timestep]
+            rewards.at[timestep].get()
+            + gamma * values.at[timestep + 1].get() * masks.at[timestep].get()
+            - values.at[timestep].get()
         )
-        advantages[timestep] = (
-            delta + gamma * lambda_ * masks[timestep] * advantages[timestep + 1]
+        advantages.insert(
+            0,
+            delta + gamma * lambda_ * masks.at[timestep].get() * advantages[0],
         )
-    return advantages
+    return jnp.stack(advantages)
 
 
 @dataclass
@@ -149,27 +153,36 @@ class A2CTraining(AgentTraining):
         training: A2CTraining,
         env_wrapper: RecordEpisodeStatistics,
     ) -> Tuple[np.ndarray, Array, Array, Array, KeyArray]:
-        rewards = jnp.zeros((training.num_timesteps, training.num_envs))
-        state_trajectory = jnp.zeros((training.num_timesteps, *states.shape))
-        mask = jnp.zeros((training.num_timesteps, training.num_envs))
-        entropy = jnp.zeros((1,))
-
+        rewards = []
+        state_trajectory = []
+        masks = []
+        entropy = []
+        actions = []
         key, subkey = jax.random.split(key)
-        for timestep in range(training.num_timesteps):
-            actions: np.ndarray = np.array(agent.get_action(subkey, states))
+        for _ in range(training.num_timesteps):
+            action_log_probs = agent.get_log_policy(agent.state.actor_params, states)
+            policy_entropy = agent.get_policy_entropy(action_log_probs)
+            jax_action = agent.get_action(subkey, action_log_probs)
+            action = np.array(jax_action).astype(np.int32)
 
-            states, reward, done, _, _ = env_wrapper.step(
-                actions.reshape(env_wrapper.env.action_space.shape)
-            )
+            states, reward, done, _, _ = env_wrapper.step(action)
 
-            rewards[timestep] = reward
-            state_trajectory[timestep] = states
-            mask[timestep] = 1 - done
+            rewards.append(reward.squeeze())
+            state_trajectory.append(states.squeeze())
+            masks.append(1 - done)
+            entropy.append(policy_entropy.squeeze())
+            actions.append(jax_action.squeeze())
 
             _, subkey = jax.random.split(subkey)
 
+        rewards = jnp.stack(rewards)
+        state_trajectory = jnp.stack(state_trajectory)
+        masks = jnp.stack(masks)
+        entropy = jnp.stack(entropy)
+        actions = jnp.stack(actions)
+
         actor_loss, critic_loss = A2CTraining.update(
-            agent, rewards, jnp.array(state_trajectory), mask, training, entropy.mean()
+            agent, rewards, state_trajectory, actions, masks, training, entropy.mean()
         )
         return states, actor_loss, critic_loss, entropy, subkey
 
@@ -178,6 +191,7 @@ class A2CTraining(AgentTraining):
         agent: Agent,
         rewards: Array,
         states: Array,
+        actions: Array,
         masks: Array,
         hyperparameters: A2CTraining,
         entropy: Array = jnp.array([0]),
@@ -190,7 +204,7 @@ class A2CTraining(AgentTraining):
 
         """
 
-        def calculate_advantage(params):
+        def calculate_advantage(params, states):
             return jnp.mean(
                 calculate_gae(
                     params,
@@ -206,15 +220,18 @@ class A2CTraining(AgentTraining):
         advantages, advantages_grad = jax.value_and_grad(calculate_advantage)(
             agent.state.critic_params, states
         )
-        critic_grad = jnp.mean(-2 * advantages_grad * advantages)
-
-        log_probs, log_prob_grad = jax.value_and_grad(agent.get_action_log_probs)(
-            agent.state.actor_params, states
+        critic_grad = jax.tree_map(
+            lambda x: jnp.mean(-2 * x * advantages), advantages_grad
         )
 
-        actor_grad = (
-            -advantages.mean() * log_prob_grad
-            - hyperparameters.entropy_coef * entropy.mean()
+        log_probs, log_prob_grad = jax.value_and_grad(
+            agent.get_action_log_probs, agent.state.actor_params, states, actions
+        )
+
+        actor_grad = jax.tree_map(
+            lambda grad: -advantages.mean() * grad
+            - hyperparameters.entropy_coef * entropy.mean(),
+            log_prob_grad,
         )
         actor_loss = (
             -advantages.mean() * log_probs.mean()

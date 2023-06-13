@@ -8,7 +8,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.10"
 jax = "^0.4.11"
-gymnasium = "^0.28.1"
+gymnasium = {extras = ["box2d"], version = "^0.28.1"}
 matplotlib = "^3.7.1"
 dm-haiku = { git = "https://github.com/deepmind/dm-haiku" }
 optax = "^0.1.5"
