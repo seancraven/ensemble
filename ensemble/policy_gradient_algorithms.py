@@ -28,26 +28,31 @@ def train_agent(
         envs, deque_size=training.num_envs * training.num_episodes
     )
 
-    advantages = []
+    actor_losses = []
+    critic_losses = []
     entropies = []
     states, _ = env_wrapper.reset(seed=training.seed)
 
     keys = jax.random.PRNGKey(training.seed)
     for _ in range(training.num_episodes):
-        states, advantage, entropy, keys = training.episode(
+        states, actor_loss, critic_loss, entropy, keys = training.episode(
             keys, states, agent, training, env_wrapper
         )
         keys = jax.random.split(keys, training.num_envs)
-        advantages.append(advantage)
+        actor_losses.append(actor_loss)
+        critic_losses.append(critic_loss)
         entropies.append(entropy)
-    jnp.stack(advantages)
+    jnp.stack(actor_losses)
+    jnp.stack(critic_losses)
     jnp.stack(entropies)
     np.save(
         f"{dir_name}/{training.seed}_returns.npy",
         np.array(env_wrapper.return_queue),
     )
-    np.save(f"{dir_name}/{training.seed}_advantages.npy", advantages)
     np.save(f"{dir_name}/{training.seed}_entropies.npy", entropies)
+    np.save(f"{dir_name}/{training.seed}_actor_losses.npy", actor_losses)
+    np.save(f"{dir_name}/{training.seed}_critic_losses.npy", critic_losses)
+
 
 
 @dataclass
@@ -224,8 +229,8 @@ class A2CTraining(AgentTraining):
             lambda x: jnp.mean(-2 * x * advantages), advantages_grad
         )
 
-        log_probs, log_prob_grad = jax.value_and_grad(
-            agent.get_action_log_probs, agent.state.actor_params, states, actions
+        log_probs, log_prob_grad = jax.value_and_grad(agent.get_action_log_probs)(
+            agent.state.actor_params, states, actions
         )
 
         actor_grad = jax.tree_map(
