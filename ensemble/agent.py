@@ -20,7 +20,7 @@ class RLEnvironmentError(Exception):
     """Raised when the environment is not supported."""
 
 
-class Agent(hk.Module):
+class Agent:
     """
     An Actor critic agent, that defines a stochastic policy over a discrete action space.
     The agent
@@ -33,6 +33,7 @@ class Agent(hk.Module):
         internal_dim: int,
         actor_lr: float = 1e-3,
         critic_lr: float = 1e-3,
+        random_key: KeyArray = jax.random.PRNGKey(0),
     ):
         super().__init__()
         match observation_space.shape:
@@ -42,30 +43,38 @@ class Agent(hk.Module):
                 raise RLEnvironmentError("Environment must have shape supported.")
 
         self.internal_dim = internal_dim
+        self.action_space = action_space
 
-        self.critic = hk.Sequential(
-            [
-                hk.Linear(self.internal_dim),
-                jax.nn.relu,
-                hk.Linear(self.internal_dim),
-                jax.nn.relu,
-                hk.Linear(1),
-            ]
-        )
-        self.actor = hk.Sequential(
-            [
-                hk.Linear(self.internal_dim),
-                jax.nn.relu,
-                hk.Linear(self.internal_dim),
-                jax.nn.relu,
-                hk.Linear(action_space.n),
-            ]
-        )
-        self.transformed_actor = self.get_actor_params()
-        self.transformed_critic = self.get_critic_params()
+        def actor(states: ArrayLike) -> Array:
+            mlp = hk.Sequential(
+                [
+                    hk.Linear(self.internal_dim),
+                    jax.nn.relu,
+                    hk.Linear(self.internal_dim),
+                    jax.nn.relu,
+                    hk.Linear(self.action_space.n),
+                ]
+            )
+            return mlp(states)
+
+        def critic(states: ArrayLike) -> Array:
+            mlp = hk.Sequential(
+                [
+                    hk.Linear(self.internal_dim),
+                    jax.nn.relu,
+                    hk.Linear(self.internal_dim),
+                    jax.nn.relu,
+                    hk.Linear(1),
+                ]
+            )
+            return mlp(states)
+
+        self.transformed_actor = hk.without_apply_rng(hk.transform(actor))
+        self.transformed_critic = hk.without_apply_rng(hk.transform(critic))
+        actor_key, critic_key = jax.random.split(random_key)
         self.state = AgentState.new(
-            self.transformed_actor.init((1, self.input_dim)),
-            self.transformed_critic.init((1, self.input_dim)),
+            self.transformed_actor.init(actor_key, jnp.ones((1, self.input_dim))),
+            self.transformed_critic.init(critic_key, jnp.ones((1, self.input_dim))),
             actor_lr,
             critic_lr,
         )
@@ -75,12 +84,6 @@ class Agent(hk.Module):
 
     def critic_forward(self, params: hk.Params, state: ArrayLike) -> Array:
         return self.transformed_critic.apply(params, state)
-
-    def get_actor_params(self) -> hk.Transformed:
-        return hk.without_apply_rng(hk.transform(self.actor))
-
-    def get_critic_params(self) -> hk.Transformed:
-        return hk.without_apply_rng(hk.transform(self.critic))
 
     @staticmethod
     def get_action_entropy(action_log_probs: ArrayLike) -> Array:

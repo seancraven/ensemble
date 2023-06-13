@@ -15,6 +15,7 @@ optax = "^0.1.5"
 pylint = "^2.17.4"
 wrapt = "^1.15.0"
 dill = "^0.3.6"
+pytest = "^7.3.2"
 
 
 [tool.poetry.group.dev.dependencies]

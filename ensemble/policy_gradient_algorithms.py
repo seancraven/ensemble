@@ -8,8 +8,7 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import numpy as np
-from gymnasium.wrappers.record_episode_statistics import \
-    RecordEpisodeStatistics
+from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
 from jax import Array
 from jax.nn import log_softmax
 from jax.random import KeyArray
@@ -67,7 +66,7 @@ class AgentTraining(Protocol):
         keys: KeyArray,
         states: np.ndarray,
         agent: Agent,
-        hyp: AgentTraining,
+        training: AgentTraining,
         env_wrapper: RecordEpisodeStatistics,
     ) -> Tuple[np.ndarray, Array, Array, Array, KeyArray]:
         """Defines how experience from an episode updates the agent.
@@ -89,7 +88,7 @@ class AgentTraining(Protocol):
         rewards: Array,
         states: Array,
         masks: Array,
-        hyperparameters: AgentTraining,
+        training: AgentTraining,
         *args: Any,
     ):
         ...
@@ -147,16 +146,16 @@ class A2CTraining(AgentTraining):
         key: KeyArray,
         states: np.ndarray,
         agent: Agent,
-        hyp: A2CTraining,
+        training: A2CTraining,
         env_wrapper: RecordEpisodeStatistics,
     ) -> Tuple[np.ndarray, Array, Array, Array, KeyArray]:
-        rewards = jnp.zeros((hyp.num_timesteps, hyp.num_envs))
-        state_trajectory = jnp.zeros((hyp.num_timesteps, *states.shape))
-        mask = jnp.zeros((hyp.num_timesteps, hyp.num_envs))
+        rewards = jnp.zeros((training.num_timesteps, training.num_envs))
+        state_trajectory = jnp.zeros((training.num_timesteps, *states.shape))
+        mask = jnp.zeros((training.num_timesteps, training.num_envs))
         entropy = jnp.zeros((1,))
 
         key, subkey = jax.random.split(key)
-        for timestep in range(hyp.num_timesteps):
+        for timestep in range(training.num_timesteps):
             actions: np.ndarray = np.array(agent.get_action(subkey, states))
 
             states, reward, done, _, _ = env_wrapper.step(
@@ -170,12 +169,12 @@ class A2CTraining(AgentTraining):
             _, subkey = jax.random.split(subkey)
 
         actor_loss, critic_loss = A2CTraining.update(
-            agent, rewards, jnp.array(state_trajectory), mask, hyp, entropy.mean()
+            agent, rewards, jnp.array(state_trajectory), mask, training, entropy.mean()
         )
         return states, actor_loss, critic_loss, entropy, subkey
 
     @staticmethod
-    def update(  # pylint: Ignore
+    def update(  # pylint: ignore
         agent: Agent,
         rewards: Array,
         states: Array,
