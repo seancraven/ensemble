@@ -1,3 +1,6 @@
+"""
+Module that defines the protocol for agent trainng and how the agent is trained.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -25,7 +28,7 @@ def train_agent(
     dir_name: str = "",
 ):
     env_wrapper = RecordEpisodeStatistics(
-        envs, deque_size=training.num_envs * training.num_episodes
+        envs, deque_size=envs.num_envs * training.num_episodes
     )
 
     actor_losses = []
@@ -37,9 +40,13 @@ def train_agent(
     _, subkey = jax.random.split(key, env_wrapper.num_envs)
 
     for _ in range(training.num_episodes):
-        states, actor_loss, critic_loss, entropy, subkey = training.episode(
-            subkey, states, agent, training, env_wrapper
-        )
+        (
+            subkey,
+            states,
+            actor_loss,
+            critic_loss,
+            entropy,
+        ) = training.episode(subkey, agent, env_wrapper, states)
         _, subkey = jax.random.split(key)
         actor_losses.append(actor_loss)
         critic_losses.append(critic_loss)
@@ -61,8 +68,7 @@ class AgentTraining(Protocol):
     """Container for general training hyperparameters, and training behaviour."""
 
     update_name: str
-    num_episodes: int = 1000
-    num_envs: int = 10
+    num_episodes: int = 100
     num_timesteps: int = 128
     seed: int = 0
     td_lambda_lambda: float = 0.95
@@ -74,19 +80,26 @@ class AgentTraining(Protocol):
         random_key: KeyArray,
         agent: Agent,
         env_wrapper: RecordEpisodeStatistics,
-    ) -> Tuple[np.ndarray, Array, Array, Array, KeyArray]:
+        inital_states: np.ndarray,
+    ) -> Tuple[KeyArray, np.ndarray, Array, Array, Array]:
         """Defines how experience from an episode updates the agent.
         Args:
             random_key: The random key for the episode.
             agent: The agent to train.
             env_wrapper: The environment with a wrapper.
         Returns:
-            The final states, the actor loss, the critic_loss,
-            the entropies, the final random key.
+            the final random key, The final states, the actor loss, the critic_loss,
+            the entropies.
         """
         ...
 
     def update(self, agent: Agent, update_parameters: Any):
+        """Updates the agent's policy using gae actor critic.
+        Args:
+            agent: The agent to update.
+            update_parameters: The hyperparameters unique to the update.
+
+        """
         ...
 
 

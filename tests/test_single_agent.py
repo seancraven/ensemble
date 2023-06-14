@@ -3,6 +3,7 @@ import jax
 import jax.numpy as jnp
 
 from ensemble.a2c import A2CTraining
+from ensemble.policy_gradient_algorithms import train_agent
 from ensemble.single_agent import Agent, action_log_probs, sample_action
 
 
@@ -40,5 +41,16 @@ def test_episode():
         test_envs.single_observation_space, test_envs.single_action_space, 32
     )
 
-    A2CTraining().episode(jax.random.PRNGKey(0), test_agent, test_envs)
+    states, _ = test_envs.reset()
+    A2CTraining().episode(jax.random.PRNGKey(0), test_agent, test_envs, states)
+    assert True
+
+
+def test_train():
+    test_envs = gym.vector.make("CartPole-v1", num_envs=2)
+    test_agent = Agent(
+        test_envs.single_observation_space, test_envs.single_action_space, 32
+    )
+    training_params = A2CTraining()
+    train_agent(test_agent, test_envs, training_params, "~/Documents/ensemble/plots")
     assert True

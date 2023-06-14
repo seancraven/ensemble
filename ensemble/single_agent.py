@@ -1,3 +1,6 @@
+"""
+Single agent for rl training on a discrete action spacce.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -179,4 +182,5 @@ def action_log_probs(action_logits: Array, actions: Array) -> Array:
 
 @jax.jit
 def get_policy_entropy(action_log_probs: ArrayLike) -> Array:
+    """Calculates the entropy of a log probability distribution(policy)."""
     return -jnp.sum(action_log_probs * jnp.exp(action_log_probs), axis=-1)

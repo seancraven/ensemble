@@ -1,3 +1,6 @@
+"""
+Actor Critic training algorithm implementation.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -76,31 +79,45 @@ class A2CTraining(AgentTraining):
             )
             critic_loss = advantages.mean() ** 2
 
-            agent.state.update(actor_grad, critic_grad)
-            return actor_loss, critic_loss
+            return (actor_loss, critic_loss), (actor_grad, critic_grad)
 
         states, actions, rewards, masks = agent.replay_buffer.to_arrays()
+        loss_tup, grad_tup = _inner(states, actions, entropy)
 
-        return _inner(states, actions, entropy)
+        agent.state.update(*grad_tup)
+        return loss_tup
 
     def episode(
-        self, random_key: KeyArray, agent: Agent, env_wrapper: RecordEpisodeStatistics
+        self,
+        random_key: KeyArray,
+        agent: Agent,
+        env_wrapper: RecordEpisodeStatistics,
+        inital_states: np.ndarray,
     ):
         agent.replay_buffer.empty()
-
-        states, _ = env_wrapper.reset()
+        states = inital_states
         policy_entropy = []
         for _ in range(self.num_timesteps):
             action_logits = agent.actor_forward(agent.state.actor_params, states)
-            policy_entropy.append(get_policy_entropy(action_logits))
+
             actions = sample_action(random_key, action_logits)
-            _, random_key = jax.random.split(random_key)
+
             next_states, rewards, dones, _, _ = env_wrapper.step(
                 np.array(actions).astype(np.int32)
             )
             agent.replay_buffer.append(states, actions, rewards, dones)
+            policy_entropy.append(get_policy_entropy(action_logits))
             states = next_states
+            _, random_key = jax.random.split(random_key)
+
         actor_loss, critic_loss = self.update(agent)
         entropy = jnp.mean(jnp.stack(policy_entropy))
+        final_states = states
 
-        return states, actor_loss, critic_loss, entropy, random_key
+        return (
+            random_key,
+            final_states,
+            actor_loss,
+            critic_loss,
+            entropy,
+        )
