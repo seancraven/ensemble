@@ -14,7 +14,7 @@ from jax.nn import log_softmax
 from jax.random import KeyArray
 from jax.typing import ArrayLike
 
-from ensemble.agent import Agent  # pyright: ignore
+from ensemble.single_agent import Agent  # pyright: ignore
 
 
 def train_agent(
@@ -100,7 +100,6 @@ class AgentTraining(Protocol):
     ):
         ...
 
-
 def calculate_gae(
     agent: Agent,
     params: hk.Params,
@@ -143,110 +142,55 @@ def calculate_gae(
                 0,
                 delta + gamma * lambda_ * masks.at[timestep].get() * advantages[0],
             )
-        return jnp.stack(advantages)
+        return jnp.stack(advantages).mean(axis = 1)
     return _inner(rewards, values, masks)
 
-
-@dataclass
-class A2CTraining(AgentTraining):
-    """Hyperparametrs for A2C training, with default values"""
-
-    entropy_coef: float = 0.1
-    update_name: str = "a2c"
-
-    def episode(
-        self,
-        key: KeyArray,
-        states: np.ndarray,
-        agent: Agent,
-        training: A2CTraining,
-        env_wrapper: RecordEpisodeStatistics,
-    ) -> Tuple[np.ndarray, Array, Array, Array, KeyArray]:
-        rewards = []
-        state_trajectory = []
-        masks = []
-        entropy = []
-        actions = []
-        key, subkey = jax.random.split(key, env_wrapper.num_envs)
-        for _ in range(training.num_timesteps):
-            action_log_probs = agent.get_log_policy(agent.state.actor_params, states)
-            policy_entropy = agent.get_policy_entropy(action_log_probs)
-            jax_action = agent.get_action(subkey, action_log_probs)
-            action = np.array(jax_action).astype(np.int32)
-
-            states, reward, done, _, _ = env_wrapper.step(action)
-
-            rewards.append(reward.squeeze())
-            state_trajectory.append(states.squeeze())
-            masks.append(1 - done)
-            entropy.append(policy_entropy.squeeze())
-            actions.append(jax_action.squeeze())
-            key, subkey = jax.random.split(subkey)
-
-        rewards = jnp.stack(rewards)
-        state_trajectory = jnp.stack(state_trajectory)
-        masks = jnp.stack(masks)
-        entropy = jnp.stack(entropy)
-        actions = jnp.stack(actions)
-
-        actor_loss, critic_loss = a2c_update(
-            agent, rewards, state_trajectory, actions, masks, training, entropy.mean()
-        )
-        return states, actor_loss, critic_loss, entropy, subkey
+# def calculate_gae(
+#     agent: Agent,
+#     params: hk.Params,
+#     rewards: Array,
+#     states: Array,
+#     masks: Array,
+#     gamma: float,
+#     lambda_: float,
+# ) -> Array:
+#     """Calculates the generalized advantage estimate. Using recursive TD(lambda).
+#     Args:
+#         rewards: Tensor of rewards: (batch_size, timestep)
+#         action_log_probs: Tensor of log probabilities of the actions: (batch_size).
+#         values: Tensor of state values: (batch_size, timestep).
+#         entropy: Tensor of entropy values: (batch_size, timestep).
+#         masks: Tensor of masks: (batch_size, timestep), 1 if the episode is not
+#         done, 0 otherwise.
+#         gamma: The discount factor for the mdp.
+#         lambda_: The lambda parameter for TD(lambda), controls the amount of
+#         bias/variance.
+#         ent_coef: The entropy coefficient, for exploration encouragement.
+#
+#     Returns:
+#         advantages: Tensor of advantages: (batch_size, timestep).
+#     """
+#     values = agent.critic_forward(params, states)
+#     
+#     @jax.jit
+#     def _inner(rewards, values, masks):
+#         max_timestep = rewards.shape[0]
+#         advantages = [jnp.zeros_like(rewards.at[0].get())]
+#
+#         for timestep in reversed(range(max_timestep - 1)):
+#             delta = (
+#                 rewards.at[timestep].get()
+#                 + gamma * values.at[timestep + 1].get() * masks.at[timestep].get()
+#                 - values.at[timestep].get()
+#             )
+#             advantages.insert(
+#                 0,
+#                 delta + gamma * lambda_ * masks.at[timestep].get() * advantages[0],
+#             )
+#         return jnp.stack(advantages)
+#     return _inner(rewards, values, masks)
 
 
-def a2c_update(
-    agent: Agent,
-    rewards: Array,
-    states: Array,
-    actions: Array,
-    masks: Array,
-    hyperparameters: A2CTraining,
-    entropy: Array = jnp.array([0]),
-) -> Tuple[Array, Array]:
-    """Updates the agent's policy using gae actor critic.
-    Args:
-        advantages: Tensor of advantages: (batch_size, timestep).
-        action_log_probs: Tensor of log probabilities of the actions:
-        (batch_size, timestep).
-
-    """
-
-    def calculate_advantage(params, states):
-        return jnp.mean(
-            calculate_gae(
-                agent,
-                params,
-                rewards,
-                states,
-                masks,
-                hyperparameters.gamma,
-                hyperparameters.td_lambda_lambda,
-            )
-        )
-
-    advantages, advantages_grad = jax.value_and_grad(calculate_advantage)(
-        agent.state.critic_params, states
-    )
-    critic_grad = jax.tree_map(lambda x: jnp.mean(-2 * x * advantages), advantages_grad)
-
-    log_probs, log_prob_grad = jax.value_and_grad(agent.get_action_log_probs)(
-        agent.state.actor_params, states, actions
-    )
-
-    actor_grad = jax.tree_map(
-        lambda grad: -advantages.mean() * grad
-        - hyperparameters.entropy_coef * entropy.mean(),
-        log_prob_grad,
-    )
-    actor_loss = (
-        -advantages.mean() * log_probs.mean()
-        - hyperparameters.entropy_coef * entropy.mean()
-    )
-    critic_loss = advantages.mean() ** 2
-
-    agent.state.update(actor_grad, critic_grad)
-    return actor_loss, critic_loss
 
 
 @dataclass
