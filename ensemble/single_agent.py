@@ -1,25 +1,25 @@
 from __future__ import annotations
-from typing import Tuple
-from typing import List
-import jax
-from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
-import gymnasium as gym
-import jax.numpy as jnp
+
 from dataclasses import dataclass
+from typing import List, Tuple, Union
+
+import gymnasium as gym
 import haiku as hk
+import jax
+import jax.numpy as jnp
+import numpy as np
+import optax
+from gymnasium.wrappers.record_episode_statistics import \
+    RecordEpisodeStatistics
 from jax import Array
 from jax.random import KeyArray
 from jax.typing import ArrayLike
-from optax import OptState, GradientTransformation, adam
-from ensemble.policy_gradient_algorithms import A2CTraining
-import optax
-from typing import Union
-import numpy as np
-
+from optax import GradientTransformation, OptState, adam
 
 
 class RLEnvironmentError(Exception):
     """Raised when the environment is not supported."""
+
 
 @dataclass
 class ReplayBuffer:
@@ -43,15 +43,13 @@ class ReplayBuffer:
             jnp.stack(self.rewards),
             jnp.stack(self.dones),
         )
+
     def append(self, states: Array, actions: Array, rewards: Array, dones: Array):
         """Appends the given transition to the buffer."""
         self.states.append(states)
         self.actions.append(actions)
         self.rewards.append(rewards)
         self.dones.append(dones)
-
-
-
 
 
 @dataclass
@@ -100,8 +98,6 @@ class AgentState:
         self.critic_params = optax.apply_updates(self.critic_params, critic_updates)
 
 
-
-
 class Agent:
     def __init__(
         self,
@@ -145,6 +141,7 @@ class Agent:
                 ]
             )
             return mlp(states)
+
         self.replay_buffer = ReplayBuffer([], [], [], [])
 
         self.transformed_actor = hk.without_apply_rng(hk.transform(actor))
@@ -161,15 +158,17 @@ class Agent:
         return jax.jit(self.transformed_actor.apply)(params, state).squeeze()
 
     def critic_forward(self, params: hk.Params, state: ArrayLike) -> Array:
-        return jax.jit(self.transformed_critic.apply)(params, state).squeeze()    
+        return jax.jit(self.transformed_critic.apply)(params, state).squeeze()
 
     def get_action_log_probs(self, params, states, actions):
         action_logits = self.actor_forward(params, states)
         return action_log_probs(action_logits, actions)
 
-def sample_action(rng_key: KeyArray, action_logits: Array) -> Array: 
+
+def sample_action(rng_key: KeyArray, action_logits: Array) -> Array:
     """Samples action according to softmax policy defined by input logits."""
     return jax.random.categorical(rng_key, logits=action_logits)
+
 
 @jax.jit
 def action_log_probs(action_logits: Array, actions: Array) -> Array:
@@ -177,91 +176,7 @@ def action_log_probs(action_logits: Array, actions: Array) -> Array:
     action_log_probs = jax.nn.log_softmax(action_logits)
     return action_log_probs.at[actions].get()
 
+
 @jax.jit
 def get_policy_entropy(action_log_probs: ArrayLike) -> Array:
     return -jnp.sum(action_log_probs * jnp.exp(action_log_probs), axis=-1)
-
-
-
-# def update(
-#     self,
-#     agent: Agent,
-#     training_params: A2CTraining,
-#     entropy: Array = jnp.array([0]),
-# ) -> Tuple[Array, Array]:
-#     """Updates the agent's policy using gae actor critic.
-#     Args:
-#         advantages: Tensor of advantages: (batch_size, timestep).
-#         action_log_probs: Tensor of log probabilities of the actions:
-#         (batch_size, timestep).
-#
-#     """
-#
-#     def calculate_advantage(params, states):
-#         return jnp.mean(
-#             calculate_gae(
-#                 agent,
-#                 params,
-#                 rewards,
-#                 states,
-#                 masks,
-#                 self.gamma,
-#                 self.td_lambda_lambda,
-#             )
-#         )
-#     def get_mean_log_probs(params, states, actions):
-#         return jnp.mean(agent.get_action_log_probs(params, states, actions))
-#
-#     
-#     @jax.jit
-#     def _inner(states, actions, entropy):
-#         advantages, advantages_grad = jax.jit(jax.value_and_grad(calculate_advantage))(
-#             agent.state.critic_params, states
-#         )
-#         critic_grad = jax.tree_map(lambda x: jnp.mean(-2 * x * advantages), advantages_grad)
-#
-#
-#         log_probs, log_prob_grad = jax.jit(jax.value_and_grad(get_mean_log_probs))(
-#             agent.state.actor_params, states, actions
-#         )
-#
-#         actor_grad = jax.tree_map(
-#             lambda grad: -advantages.mean() * grad
-#             - training_params.entropy_coef * entropy.mean(),
-#             log_prob_grad,
-#         )
-#         actor_loss = (
-#             -advantages.mean() * log_probs.mean()
-#             - training_params.entropy_coef * entropy.mean()
-#         )
-#         critic_loss = advantages.mean() ** 2
-#
-#         agent.state.update(actor_grad, critic_grad)
-#         return actor_loss, critic_loss
-#
-#     states, actions, rewards, masks= agent.replay_buffer.to_arrays()
-#
-#     return _inner(states, actions,  entropy)
-#
-# def a2c_episode(random_key: KeyArray, agent:Agent, envs: RecordEpisodeStatistics, training_params: A2CTraining):
-#
-#     agent.replay_buffer.empty()
-#     
-#     states,_ = envs.reset()
-#     policy_entropy = []
-#     for _ in range(training_params.num_timesteps):
-#         action_logits = agent.actor_forward(agent.state.actor_params, states)
-#         policy_entropy.append(get_policy_entropy(action_logits))
-#         actions = sample_action(random_key, action_logits)
-#         _, random_key = jax.random.split(random_key)
-#         next_states, rewards, dones, _, _= envs.step(np.array(actions).astype(np.int32))
-#         agent.replay_buffer.append(states, actions, rewards, dones)
-#         states = next_states
-#     actor_loss, critic_loss = a2c_update(agent, training_params)
-#     entropy = jnp.mean(jnp.stack(policy_entropy))
-#     
-#     return states, actor_loss, critic_loss, entropy, random_key
-#
-#
-#
-
