@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple, Union
+from typing import Union
 
 import gymnasium as gym
 import haiku as hk
@@ -79,11 +79,14 @@ class Agent:
             critic_lr,
         )
 
-    def actor_forward(self, params: hk.Params, state: ArrayLike) -> Array:
-        return self.transformed_actor.apply(params, state).squeeze()
+
+        self._critic_forward = jax.jit(self.transformed_critic.apply)
+        self._actor_forward = jax.jit(self.transformed_actor.apply)
 
     def critic_forward(self, params: hk.Params, state: ArrayLike) -> Array:
-        return self.transformed_critic.apply(params, state).squeeze()
+        return self._critic_forward(params, state).squeeze()
+    def actor_forward(self, params: hk.Params, state: ArrayLike) -> Array:
+        return self._actor_forward(params, state)
 
     @staticmethod
     def get_policy_entropy(action_log_probs: ArrayLike) -> Array:

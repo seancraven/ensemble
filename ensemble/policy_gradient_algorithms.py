@@ -68,8 +68,8 @@ class AgentTraining(Protocol):
     gamma: float = 0.99
     lrs: Tuple[float, float] = (1e-3, 5e-4)
 
-    @staticmethod
     def episode(
+        self,
         keys: KeyArray,
         states: np.ndarray,
         agent: Agent,
@@ -102,8 +102,8 @@ class AgentTraining(Protocol):
 
 
 def calculate_gae(
-    params: hk.Params,
     agent: Agent,
+    params: hk.Params,
     rewards: Array,
     states: Array,
     masks: Array,
@@ -127,20 +127,24 @@ def calculate_gae(
         advantages: Tensor of advantages: (batch_size, timestep).
     """
     values = agent.critic_forward(params, states)
-    max_timestep = rewards.shape[0]
-    advantages = [jnp.zeros_like(rewards.at[0].get())]
+    
+    @jax.jit
+    def _inner(rewards, values, masks):
+        max_timestep = rewards.shape[0]
+        advantages = [jnp.zeros_like(rewards.at[0].get())]
 
-    for timestep in reversed(range(max_timestep - 1)):
-        delta = (
-            rewards.at[timestep].get()
-            + gamma * values.at[timestep + 1].get() * masks.at[timestep].get()
-            - values.at[timestep].get()
-        )
-        advantages.insert(
-            0,
-            delta + gamma * lambda_ * masks.at[timestep].get() * advantages[0],
-        )
-    return jnp.stack(advantages)
+        for timestep in reversed(range(max_timestep - 1)):
+            delta = (
+                rewards.at[timestep].get()
+                + gamma * values.at[timestep + 1].get() * masks.at[timestep].get()
+                - values.at[timestep].get()
+            )
+            advantages.insert(
+                0,
+                delta + gamma * lambda_ * masks.at[timestep].get() * advantages[0],
+            )
+        return jnp.stack(advantages)
+    return _inner(rewards, values, masks)
 
 
 @dataclass
@@ -150,8 +154,8 @@ class A2CTraining(AgentTraining):
     entropy_coef: float = 0.1
     update_name: str = "a2c"
 
-    @staticmethod
     def episode(
+        self,
         key: KeyArray,
         states: np.ndarray,
         agent: Agent,
@@ -191,7 +195,6 @@ class A2CTraining(AgentTraining):
         return states, actor_loss, critic_loss, entropy, subkey
 
 
-@jax.jit
 def a2c_update(
     agent: Agent,
     rewards: Array,
@@ -212,8 +215,8 @@ def a2c_update(
     def calculate_advantage(params, states):
         return jnp.mean(
             calculate_gae(
-                params,
                 agent,
+                params,
                 rewards,
                 states,
                 masks,
