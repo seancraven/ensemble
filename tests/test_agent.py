@@ -63,3 +63,5 @@ def test_train():
         test_env.single_observation_space, test_env.single_action_space, 32
     )
     train_agent(test_agent, test_env, A2CTraining())
+
+

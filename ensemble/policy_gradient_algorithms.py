@@ -191,6 +191,7 @@ class A2CTraining(AgentTraining):
         )
         return states, actor_loss, critic_loss, entropy, subkey
 
+    @jax.jit
     @staticmethod
     def update(  # pylint: ignore
         agent: Agent,
