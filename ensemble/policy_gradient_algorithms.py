@@ -8,8 +8,7 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import numpy as np
-from gymnasium.wrappers.record_episode_statistics import \
-    RecordEpisodeStatistics
+from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
 from jax import Array
 from jax.nn import log_softmax
 from jax.random import KeyArray
@@ -186,67 +185,65 @@ class A2CTraining(AgentTraining):
         entropy = jnp.stack(entropy)
         actions = jnp.stack(actions)
 
-        actor_loss, critic_loss = A2CTraining.update(
+        actor_loss, critic_loss = a2c_update(
             agent, rewards, state_trajectory, actions, masks, training, entropy.mean()
         )
         return states, actor_loss, critic_loss, entropy, subkey
 
-    @jax.jit
-    @staticmethod
-    def update(  # pylint: ignore
-        agent: Agent,
-        rewards: Array,
-        states: Array,
-        actions: Array,
-        masks: Array,
-        hyperparameters: A2CTraining,
-        entropy: Array = jnp.array([0]),
-    ) -> Tuple[Array, Array]:
-        """Updates the agent's policy using gae actor critic.
-        Args:
-            advantages: Tensor of advantages: (batch_size, timestep).
-            action_log_probs: Tensor of log probabilities of the actions:
-            (batch_size, timestep).
 
-        """
+@jax.jit
+def a2c_update(
+    agent: Agent,
+    rewards: Array,
+    states: Array,
+    actions: Array,
+    masks: Array,
+    hyperparameters: A2CTraining,
+    entropy: Array = jnp.array([0]),
+) -> Tuple[Array, Array]:
+    """Updates the agent's policy using gae actor critic.
+    Args:
+        advantages: Tensor of advantages: (batch_size, timestep).
+        action_log_probs: Tensor of log probabilities of the actions:
+        (batch_size, timestep).
 
-        def calculate_advantage(params, states):
-            return jnp.mean(
-                calculate_gae(
-                    params,
-                    agent,
-                    rewards,
-                    states,
-                    masks,
-                    hyperparameters.gamma,
-                    hyperparameters.td_lambda_lambda,
-                )
+    """
+
+    def calculate_advantage(params, states):
+        return jnp.mean(
+            calculate_gae(
+                params,
+                agent,
+                rewards,
+                states,
+                masks,
+                hyperparameters.gamma,
+                hyperparameters.td_lambda_lambda,
             )
-
-        advantages, advantages_grad = jax.value_and_grad(calculate_advantage)(
-            agent.state.critic_params, states
-        )
-        critic_grad = jax.tree_map(
-            lambda x: jnp.mean(-2 * x * advantages), advantages_grad
         )
 
-        log_probs, log_prob_grad = jax.value_and_grad(agent.get_action_log_probs)(
-            agent.state.actor_params, states, actions
-        )
+    advantages, advantages_grad = jax.value_and_grad(calculate_advantage)(
+        agent.state.critic_params, states
+    )
+    critic_grad = jax.tree_map(lambda x: jnp.mean(-2 * x * advantages), advantages_grad)
 
-        actor_grad = jax.tree_map(
-            lambda grad: -advantages.mean() * grad
-            - hyperparameters.entropy_coef * entropy.mean(),
-            log_prob_grad,
-        )
-        actor_loss = (
-            -advantages.mean() * log_probs.mean()
-            - hyperparameters.entropy_coef * entropy.mean()
-        )
-        critic_loss = advantages.mean() ** 2
+    log_probs, log_prob_grad = jax.value_and_grad(agent.get_action_log_probs)(
+        agent.state.actor_params, states, actions
+    )
 
-        agent.state.update(actor_grad, critic_grad)
-        return actor_loss, critic_loss
+    actor_grad = jax.tree_map(
+        lambda grad: -advantages.mean() * grad
+        - hyperparameters.entropy_coef * entropy.mean(),
+        log_prob_grad,
+    )
+    actor_loss = (
+        -advantages.mean() * log_probs.mean()
+        - hyperparameters.entropy_coef * entropy.mean()
+    )
+    critic_loss = advantages.mean() ** 2
+
+    agent.state.update(actor_grad, critic_grad)
+    return actor_loss, critic_loss
 
 
 @dataclass
