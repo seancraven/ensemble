@@ -2,8 +2,8 @@ import gymnasium as gym
 import jax
 import jax.numpy as jnp
 
-from ensemble.a2c import A2CTraining
-from ensemble.policy_gradient_algorithms import train_agent
+from ensemble.policy_gradient.a2c import A2CTraining
+from ensemble.policy_gradient.base import train_agent
 from ensemble.single_agent import Agent, action_log_probs, sample_action
 
 

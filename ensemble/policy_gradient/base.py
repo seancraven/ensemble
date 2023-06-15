@@ -7,17 +7,23 @@ from dataclasses import dataclass
 from typing import Any, Protocol, Tuple
 
 import gymnasium as gym
-import haiku as hk
 import jax
 import jax.numpy as jnp
 import numpy as np
 from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
-from jax import Array
-from jax.nn import log_softmax
 from jax.random import KeyArray
-from jax.typing import ArrayLike
 
 from ensemble.single_agent import Agent  # pyright: ignore
+from ensemble.typing import (
+    Advantages,
+    AgentParams,
+    Entropy,
+    EpisodeDones,
+    EpisodeRewards,
+    EpisodeStates,
+    Loss,
+    States,
+)
 
 
 def train_agent(
@@ -53,13 +59,13 @@ def train_agent(
     jnp.stack(actor_losses)
     jnp.stack(critic_losses)
     jnp.stack(entropies)
-    np.save(
+    jnp.save(
         f"{dir_name}/{training.seed}_returns.npy",
         np.array(env_wrapper.return_queue),
     )
-    np.save(f"{dir_name}/{training.seed}_entropies.npy", entropies)
-    np.save(f"{dir_name}/{training.seed}_actor_losses.npy", actor_losses)
-    np.save(f"{dir_name}/{training.seed}_critic_losses.npy", critic_losses)
+    jnp.save(f"{dir_name}/{training.seed}_entropies.npy", entropies)
+    jnp.save(f"{dir_name}/{training.seed}_actor_losses.npy", actor_losses)
+    jnp.save(f"{dir_name}/{training.seed}_critic_losses.npy", critic_losses)
 
 
 @dataclass
@@ -79,8 +85,8 @@ class AgentTraining(Protocol):
         random_key: KeyArray,
         agent: Agent,
         env_wrapper: RecordEpisodeStatistics,
-        inital_states: np.ndarray,
-    ) -> Tuple[KeyArray, np.ndarray, Array, Array, Array]:
+        inital_states: States,
+    ) -> Tuple[KeyArray, States, Loss, Loss, Entropy]:
         """Defines how experience from an episode updates the agent.
         Args:
             random_key: The random key for the episode.
@@ -104,13 +110,13 @@ class AgentTraining(Protocol):
 
 def calculate_gae(
     agent: Agent,
-    params: hk.Params,
-    rewards: Array,
-    states: Array,
-    masks: Array,
+    params: AgentParams,
+    rewards: EpisodeRewards,
+    states: EpisodeStates,
+    masks: EpisodeDones,
     gamma: float,
     lambda_: float,
-) -> Array:
+) -> Advantages:
     """Calculates the generalized advantage estimate as a function of input parameters.
     Using recursive TD(lambda).
     Args:
@@ -129,7 +135,7 @@ def calculate_gae(
     values = agent.critic_forward(params, states)
 
     @jax.jit
-    def _inner(rewards, values, masks):
+    def _inner(rewards: EpisodeRewards, values: EpisodeRewards, masks: EpisodeDones):
         max_timestep = rewards.shape[0]
         advantages = [jnp.zeros_like(rewards.at[0].get())]
 

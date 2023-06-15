@@ -14,8 +14,8 @@ from jax import Array
 from jax.random import KeyArray
 
 from ensemble.policy_gradient.base import AgentTraining, calculate_gae
-from ensemble.single_agent import Agent  # pyright: ignore
-from ensemble.single_agent import get_policy_entropy, sample_action
+from ensemble.single_agent import Agent, get_policy_entropy, sample_action
+from ensemble.typing import AgentParams, Entropy, EpisodeActions, EpisodeStates, States
 
 
 @dataclass
@@ -28,17 +28,11 @@ class A2CTraining(AgentTraining):
     def update(
         self,
         agent: Agent,
-        entropy: Array = jnp.array([0]),
+        entropy: Entropy = jnp.array([0]),
     ) -> Tuple[Array, Array]:
-        """Updates the agent's policy using gae actor critic.
-        Args:
-            advantages: Tensor of advantages: (batch_size, timestep).
-            action_log_probs: Tensor of log probabilities of the actions:
-            (batch_size, timestep).
+        """Updates the agent's policy using gae actor critic."""
 
-        """
-
-        def calculate_advantage(params, states):
+        def calculate_advantage(params: AgentParams, states: EpisodeStates):
             return jnp.mean(
                 calculate_gae(
                     agent,
@@ -51,11 +45,13 @@ class A2CTraining(AgentTraining):
                 )
             )
 
-        def get_mean_log_probs(params, states, actions):
+        def get_mean_log_probs(
+            params: AgentParams, states: EpisodeStates, actions: EpisodeActions
+        ):
             return jnp.mean(agent.get_action_log_probs(params, states, actions))
 
         @jax.jit
-        def _inner(states, actions, entropy):
+        def _inner(states: EpisodeStates, actions: EpisodeActions, entropy: Entropy):
             advantages, advantages_grad = jax.jit(
                 jax.value_and_grad(calculate_advantage)
             )(agent.state.critic_params, states)
@@ -91,7 +87,7 @@ class A2CTraining(AgentTraining):
         random_key: KeyArray,
         agent: Agent,
         env_wrapper: RecordEpisodeStatistics,
-        inital_states: np.ndarray,
+        inital_states: States,
     ):
         agent.replay_buffer.empty()
         states = inital_states

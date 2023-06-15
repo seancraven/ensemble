@@ -17,4 +17,9 @@ if __name__ == "__main__":
         for _ in range(NUM_SEEDS)
     ]
     for training in training_params:
-        train_agent(agent, envs, training)
+        train_agent(
+            agent,
+            envs,
+            training,
+            "/home/sean/Documents/ms_proj/ensemble/experiments/tests",
+        )

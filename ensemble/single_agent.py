@@ -12,10 +12,24 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-from jax import Array
 from jax.random import KeyArray
 from jax.typing import ArrayLike
+from jaxtyping import Array, Float
 from optax import GradientTransformation, OptState, adam
+
+from ensemble.typing import (
+    Actions,
+    ActorGrad,
+    AgentParams,
+    CriticGrad,
+    Dones,
+    EpisodeActions,
+    EpisodeDones,
+    EpisodeRewards,
+    EpisodeStates,
+    Rewards,
+    States,
+)
 
 
 class RLEnvironmentError(Exception):
@@ -24,10 +38,10 @@ class RLEnvironmentError(Exception):
 
 @dataclass
 class ReplayBuffer:
-    states: List[Array]
-    actions: List[Array]
-    rewards: List[Array]
-    dones: List[Array]
+    states: List[States]
+    actions: List[Actions]
+    rewards: List[Rewards]
+    dones: List[Dones]
 
     def empty(self):
         """Removes all history from the buffer."""
@@ -36,7 +50,9 @@ class ReplayBuffer:
         self.rewards.clear()
         self.dones.clear()
 
-    def to_arrays(self) -> Tuple[Array, Array, Array, Array]:
+    def to_arrays(
+        self,
+    ) -> Tuple[EpisodeStates, EpisodeActions, EpisodeRewards, EpisodeDones]:
         """Converts the buffer to arrays."""
         return (
             jnp.stack(self.states),
@@ -45,7 +61,7 @@ class ReplayBuffer:
             jnp.stack(self.dones),
         )
 
-    def append(self, states: Array, actions: Array, rewards: Array, dones: Array):
+    def append(self, states: States, actions: Actions, rewards: Rewards, dones: Dones):
         """Appends the given transition to the buffer."""
         self.states.append(states)
         self.actions.append(actions)
@@ -60,15 +76,15 @@ class AgentState:
     actor_opt: GradientTransformation
     critic_opt: GradientTransformation
 
-    actor_params: Union[hk.Params, optax.Params]
-    critic_params: Union[hk.Params, optax.Params]
+    actor_params: AgentParams
+    critic_params: AgentParams
     actor_opt_state: OptState
     critic_opt_state: OptState
 
     @staticmethod
     def new(
-        actor_params: hk.Params,
-        critic_params: hk.Params,
+        actor_params: AgentParams,
+        critic_params: AgentParams,
         actor_lr: float,
         critic_lr: float,
     ) -> AgentState:
@@ -86,17 +102,35 @@ class AgentState:
             critic_opt_init,
         )
 
-    def update(self, actor_grad: Array, critic_grad: Array):
+    def update(self, actor_grad: ActorGrad, critic_grad: CriticGrad):
         """Updates the agent state."""
-        actor_updates, self.actor_opt_state = self.actor_opt.update(
-            actor_grad, self.actor_opt_state, self.actor_params
-        )
-        self.actor_params = optax.apply_updates(self.actor_params, actor_updates)
 
-        critic_updates, self.critic_opt_state = self.critic_opt.update(
-            critic_grad, self.critic_opt_state, self.critic_params
+        @jax.jit
+        def _inner_critic(
+            params: AgentParams,
+            grad: CriticGrad,
+            opt_state: OptState,
+        ):
+            updates, opt_state = self.critic_opt.update(grad, opt_state, params)
+            params = optax.apply_updates(params, updates)
+            return params, opt_state
+
+        @jax.jit
+        def _inner_actor(
+            params: AgentParams,
+            grad: ActorGrad,
+            opt_state: OptState,
+        ):
+            updates, opt_state = self.actor_opt.update(grad, opt_state, params)
+            params = optax.apply_updates(params, updates)
+            return params, opt_state
+
+        self.actor_params, self.actor_opt_state = _inner_actor(
+            self.actor_params, actor_grad, self.actor_opt_state
         )
-        self.critic_params = optax.apply_updates(self.critic_params, critic_updates)
+        self.critic_params, self.critic_opt_state = _inner_critic(
+            self.critic_params, critic_grad, self.critic_opt_state
+        )
 
 
 class Agent:
@@ -119,7 +153,7 @@ class Agent:
         self.internal_dim = internal_dim
         self.action_space = action_space
 
-        def actor(states: ArrayLike) -> Array:
+        def actor(states: States) -> Actions:
             mlp = hk.Sequential(
                 [
                     hk.Linear(self.internal_dim),
@@ -131,7 +165,7 @@ class Agent:
             )
             return mlp(states)
 
-        def critic(states: ArrayLike) -> Array:
+        def critic(states: States) -> Rewards:
             mlp = hk.Sequential(
                 [
                     hk.Linear(self.internal_dim),
@@ -155,30 +189,45 @@ class Agent:
             critic_lr,
         )
 
-    def actor_forward(self, params: hk.Params, state: ArrayLike) -> Array:
+    def actor_forward(
+        self, params: AgentParams, state: Union[EpisodeStates, States]
+    ) -> Float[Array, "*envs action_shape"]:
         return jax.jit(self.transformed_actor.apply)(params, state).squeeze()
 
-    def critic_forward(self, params: hk.Params, state: ArrayLike) -> Array:
+    def critic_forward(
+        self, params: AgentParams, state: Union[States, EpisodeStates]
+    ) -> Rewards:
         return jax.jit(self.transformed_critic.apply)(params, state).squeeze()
 
-    def get_action_log_probs(self, params, states, actions):
+    def get_action_log_probs(
+        self,
+        params: AgentParams,
+        states: Union[States, EpisodeStates],
+        actions: Union[Actions, EpisodeActions],
+    ):
         action_logits = self.actor_forward(params, states)
         return action_log_probs(action_logits, actions)
 
 
-def sample_action(rng_key: KeyArray, action_logits: Array) -> Array:
+@jax.jit
+def sample_action(
+    rng_key: KeyArray, action_logits: Float[Array, "*envs action_shape"]
+) -> Array:
     """Samples action according to softmax policy defined by input logits."""
     return jax.random.categorical(rng_key, logits=action_logits)
 
 
 @jax.jit
-def action_log_probs(action_logits: Array, actions: Array) -> Array:
+def action_log_probs(
+    action_logits: Float[Array, "*envs action_shape"],
+    actions: Union[Actions, EpisodeActions],
+) -> Float[Array, "*envs action_shape"]:
     """Computes log probability of actions under softmax policy defined by input logits."""
     action_log_probs = jax.nn.log_softmax(action_logits)
     return action_log_probs.at[actions].get()
 
 
 @jax.jit
-def get_policy_entropy(action_log_probs: ArrayLike) -> Array:
+def get_policy_entropy(action_log_probs: Float[Array, "*envs action_shape"]) -> Array:
     """Calculates the entropy of a log probability distribution(policy)."""
     return -jnp.sum(action_log_probs * jnp.exp(action_log_probs), axis=-1)
