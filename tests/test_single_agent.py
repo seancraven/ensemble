@@ -51,6 +51,6 @@ def test_train():
     test_agent = Agent(
         test_envs.single_observation_space, test_envs.single_action_space, 32
     )
-    training_params = A2CTraining()
-    train_agent(test_agent, test_envs, training_params, "~/Documents/ensemble/plots")
+    training_params = A2CTraining(num_episodes=10, seed=0)
+    train_agent(test_agent, test_envs, training_params, "")
     assert True

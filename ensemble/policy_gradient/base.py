@@ -11,8 +11,7 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import numpy as np
-from gymnasium.wrappers.record_episode_statistics import \
-    RecordEpisodeStatistics
+from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
 from jax import Array
 from jax.nn import log_softmax
 from jax.random import KeyArray
@@ -37,7 +36,7 @@ def train_agent(
     states, _ = env_wrapper.reset(seed=training.seed)
 
     key = jax.random.PRNGKey(training.seed)
-    _, subkey = jax.random.split(key, env_wrapper.num_envs)
+    _, subkey = jax.random.split(key)
 
     for _ in range(training.num_episodes):
         (

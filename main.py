@@ -1,8 +1,20 @@
+import random
+
 import gymnasium as gym
-from ensemble.agent import Agent
-from ensemble.policy_gradient_algorithms import A2CTraining, train_agent
+
+from ensemble.policy_gradient.a2c import A2CTraining
+from ensemble.policy_gradient.base import train_agent
+from ensemble.single_agent import Agent
 
 if __name__ == "__main__":
-    envs = gym.vector.make("CartPole-v1", num_envs=2, asynchronous=False)
-    agent = Agent(envs.single_observation_space, envs.single_action_space, 32)
-    train_agent(agent, envs, A2CTraining())
+    random.seed(0)
+    envs = gym.vector.make("CartPole-v1", num_envs=10)
+    NUM_SEEDS = 1
+
+    agent = Agent(envs.single_observation_space, envs.single_action_space, 64)
+    training_params = [
+        A2CTraining(num_episodes=300, seed=random.randint(0, 1000))
+        for _ in range(NUM_SEEDS)
+    ]
+    for training in training_params:
+        train_agent(agent, envs, training)

@@ -12,8 +12,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-from gymnasium.wrappers.record_episode_statistics import \
-    RecordEpisodeStatistics
 from jax import Array
 from jax.random import KeyArray
 from jax.typing import ArrayLike

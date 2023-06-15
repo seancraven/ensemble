@@ -9,12 +9,11 @@ from typing import Tuple
 import jax
 import jax.numpy as jnp
 import numpy as np
-from gymnasium.wrappers.record_episode_statistics import \
-    RecordEpisodeStatistics
+from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
 from jax import Array
 from jax.random import KeyArray
 
-from ensemble.policy_gradient_algorithms import AgentTraining, calculate_gae
+from ensemble.policy_gradient.base import AgentTraining, calculate_gae
 from ensemble.single_agent import Agent  # pyright: ignore
 from ensemble.single_agent import get_policy_entropy, sample_action
 
